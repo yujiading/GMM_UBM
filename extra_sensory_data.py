@@ -5,8 +5,8 @@ import glob
 
 class ExtraSensoryData(object):
     data_source_name= 'extra_sensory_'
-    is_load_raw_df_from_disk = False
-    is_load_processed_df_from_disk = False
+    is_load_raw_df_from_disk = True
+    is_load_processed_df_from_disk = True
 
     label_columns_list = ['label:IN_A_CAR', 'label:ON_A_BUS']
 

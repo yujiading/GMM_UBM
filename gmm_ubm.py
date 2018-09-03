@@ -5,75 +5,104 @@ from sklearn import mixture
 from sklearn.externals import joblib
 import glob
 import logging
+import scipy.stats
+from sklearn.base import clone
 
 
 # for feature_name, feature_training_config in ExtraSensoryData.feature_training_configs.items():
 
 class GMM_UBM(object):
     """
-    Train one GMM per feature (a set of columns).
-    Add the probability for prediction from each GMM for final prediction score.
+    Train one GMM for UBM model. Adapt one GMM from UBM for client model.
+    return one client adapted gmm model.
     """
 
     def __init__(self,
                  data_source_name: str,
-                 train_data: pd.DataFrame,
                  label_name: str,
-                 feature_training_configs: dict,
-                 feature_columns_dict: dict):
-        self.logger = logging.getLogger(__name__)
-        self.df_train = train_data
+                 n_comp,
+                 max_iter,
+                 score_thresh,
+                 balance_factor,
+                 ):
+        self.logger = logging.getLogger(__name__)  # __name__ is file name; GMM_UBM.__name__ is class name
         self.model_path_prefix = os.path.join(data_source_name + "models", label_name)
-        self.feature_training_configs = feature_training_configs
-        self.feature_columns_dict = feature_columns_dict
-        self.gmm_dict_by_feature = {}
+        self.n_comp = n_comp
+        self.max_iter = max_iter
+        self.score_thresh = score_thresh
+        self.balance_factor=balance_factor
+        self.gmm: mixture.GaussianMixture = None
+        self.adapt_model: mixture.GaussianMixture = None
+        self.score_lld = []
 
-    def fit_gmms(self):
-        """
-
-        :return:
-        """
-        for feature_name, feature_columns in self.feature_columns_dict.items():
-            training_config = self.feature_training_configs[feature_name]
-            gmm = self._fit_gmm(feature_name=feature_name,
-                                training_config=training_config,
-                                feature_columns=feature_columns)
-            self.gmm_dict_by_feature[feature_name] = gmm
-
-    def _fit_gmm(self, feature_name, training_config, feature_columns):
-        n_comp = training_config['n_component']  # training_config is sublist of feature_training_configs
-        n_iter = training_config['n_iter']
-        gmm = mixture.GaussianMixture(n_components=n_comp,
+    def fit_ubm(self, gmm_train_data: pd.DataFrame):
+        gmm = mixture.GaussianMixture(n_components=self.n_comp,
                                       covariance_type='diag',
-                                      max_iter=n_iter,
+                                      max_iter=self.max_iter,
                                       verbose=2, reg_covar=1e-9)
-        gmm_training_data = self.df_train[feature_columns]
-        self.logger.info("Training feature {feature_name} with columns: {feature_columns}".format(
-            feature_name=feature_name, feature_columns=feature_columns))
-        gmm.fit(gmm_training_data)
+        self.logger.info("Training data with columns: {feature_columns}".format(
+            feature_columns=list(gmm_train_data)))
+        gmm.fit(gmm_train_data)
 
         if not os.path.exists(self.model_path_prefix):
             os.makedirs(self.model_path_prefix)
-        model_file_name = feature_name + '.pkl'
-        joblib.dump(gmm, os.path.join(self.model_path_prefix, model_file_name))
+        joblib.dump(gmm, os.path.join(self.model_path_prefix, 'gmm.pkl'))
         # self.extract_param()
-        return gmm
+        self.gmm = gmm
 
-    def load_gmms(self):
-        for feature_name in self.feature_columns_dict:
-            model_file_name = feature_name + '.pkl'
-            gmm = joblib.load(model_file_name)
-            self.gmm_dict_by_feature[feature_name] = gmm
+    def load_ubm(self):
+        gmm = joblib.load(os.path.join(self.model_path_prefix, 'gmm.pkl'))
+        self.gmm = gmm
 
-    def adaptation(self):
+    def _one_pie_n(self, model, gmm_class, obs):
+        one_pie = model.weights_[gmm_class]
+        one_n = scipy.stats.multivariate_normal(model.means_[gmm_class],
+                                                np.diag(model.covariances_[gmm_class])).pdf(obs)
+        return one_pie * one_n
 
-        pass
+    def _obs_to_pie_n_row(self, obs):
+        one_row = []
+        for gmm_class in range(self.n_comp):
+            one_row.append(self._one_pie_n(self.gmm, gmm_class, obs))
+        return one_row
 
-    def predict_gmms(self):
-        pass
+    def _npz_to_e_one(self, one_n, col_p, adapt_train_data):
+        one_e = adapt_train_data.mul(col_p, axis=0).sum() / one_n
+        return one_e
 
-    def _predict_gmm(self):
-        pass
+    def fit_adapt(self, adapt_train_data: pd.DataFrame):
+        self.adapt_model = clone(self.gmm)
+        pie_n = adapt_train_data.apply(self._obs_to_pie_n_row, result_type='expand', axis=1)  # type: pd.DataFrame
+        p = pie_n.div(pie_n.sum(axis=1), axis='rows')
+        n = p.sum()
+        e_list = [self._npz_to_e_one(n[gmm_class], p.iloc[:, gmm_class], adapt_train_data) for gmm_class in
+                  range(self.n_comp)]
+        e = pd.concat(e_list, axis=1)
+        alpha = n / (n + self.balance_factor)
+        for gmm_class in range(self.n_comp):
+            if alpha[gmm_class] == 0:
+                new_mean = self.adapt_model.means_[gmm_class]
+            else:
+                new_mean = alpha[gmm_class] * e.iloc[:, gmm_class] + (1 - alpha[gmm_class]) * self.adapt_model.means_[
+                    gmm_class]
+            self.adapt_model.means_[gmm_class] = new_mean
+
+        if not os.path.exists(self.model_path_prefix):
+            os.makedirs(self.model_path_prefix)
+        joblib.dump(self.adapt_model, os.path.join(self.model_path_prefix, 'adapt.pkl'))
+        # self.extract_param()
+
+    def load_adapt(self):
+        adapt_model = joblib.load(os.path.join(self.model_path_prefix, 'adapt.pkl'))
+        self.adapt_model = adapt_model
+
+    def score_ubm_adapt(self, test_data: pd.DataFrame):
+        score = self.adapt_model.score(test_data.values[:], y=None) - self.gmm.score(test_data.values[:], y=None)
+        self.score_lld = score
+
+    def predict_ubm_adapt(self):
+        if self.score_lld >= self.score_thresh:
+            return True
 
 
 a = 0

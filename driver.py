@@ -8,20 +8,21 @@ import logging
 
 class Driver(object):
     @staticmethod
-    def train_model(df_train, model_name):
+    def train_one_model(gmm_train_data, adapt_train_data, model_name, n_comp, max_iter):
         gmm_ubm = GMM_UBM(
             data_source_name=ExtraSensoryData.data_source_name,
-            train_data=df_train,
+
             label_name=model_name,
-            feature_columns_dict=ExtraSensoryData.feature_columns_dict,
-            feature_training_configs=ExtraSensoryData.feature_training_configs,
+            n_comp=n_comp,
+            max_iter=max_iter,
         )
         # train model
-        gmm_ubm.fit_gmms()
-        # gmm_ubm.load_gmms()
+        gmm_ubm.fit_ubm(gmm_train_data=gmm_train_data)
+        # gmm_ubm.load_ubm()
 
         # adaptation
-        gmm_ubm.adaptation()
+        gmm_ubm.fit_adapt(adapt_train_data=adapt_train_data)
+        # gmm_ubm.load_adapt()
 
         return gmm_ubm
 
@@ -39,11 +40,8 @@ class Driver(object):
         df_train = df_all[msk]
         print(ExtraSensoryData.feature_columns_list)
 
-        models_dict_by_label = {}
-        for label_column in ExtraSensoryData.label_columns_list:
-            df_train_model = df_train[df_train[label_column] == 1]
-            model = Driver.train_model(df_train=df_train_model, model_name=label_column)
-            models_dict_by_label[label_column] = model
+        model = Driver.train_one_model(gmm_train_data=df_train, adapt_train_data=adapt_train_data,
+                                       model_name='IN A CAR OR ON A BUS', n_comp=100, max_iter=100)
 
         raise NotImplementedError("Driver")
         # model= Driver.load_trained_model()
