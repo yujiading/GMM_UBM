@@ -75,7 +75,7 @@ class ExtraSensoryData(object):
 
     @staticmethod
     def _process_features(df_raw: pd.DataFrame):
-        df_processed = df_raw
+        df_processed = df_raw.dropna()
         # normalize features
         for feature_name, feature_columns in ExtraSensoryData._raw_feature_columns_dict.items():
             magnitued_name = 'magni_' + feature_name
@@ -89,7 +89,7 @@ class ExtraSensoryData(object):
                 df_processed[feature_column_name] = df_processed[feature_column] / df_processed[magnitued_name]
 
         # extract processed feature columns
-        df_columns = ExtraSensoryData.feature_columns_list.append(ExtraSensoryData.label_column)
+        df_columns = ExtraSensoryData.feature_columns_list+[ExtraSensoryData.label_column]
         df_processed = df_processed[df_columns]
         print(df_processed.info())
         df_processed.to_pickle(ExtraSensoryData._processed_df_file_path)

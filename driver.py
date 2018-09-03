@@ -28,9 +28,9 @@ class Driver(object):
         train_user_id, test_user_id = train_test_split(user_ids, test_size=0.2, random_state=1)  # random_state = seed
         train_user_id, valid_user_id = train_test_split(train_user_id, test_size=0.2, random_state=2)
 
-        train_df = df_all[Driver.DataSourceClass.label_column in train_user_id]
-        valid_df = df_all[Driver.DataSourceClass.label_column in valid_user_id]
-        test_df = df_all[Driver.DataSourceClass.label_column in test_user_id]
+        train_df = df_all[df_all[Driver.DataSourceClass.label_column].isin(train_user_id)]
+        valid_df = df_all[df_all[Driver.DataSourceClass.label_column].isin(valid_user_id)]
+        test_df = df_all[df_all[Driver.DataSourceClass.label_column].isin(test_user_id)]
 
         train_x = train_df[Driver.DataSourceClass.feature_columns_list]
         train_y = train_df[Driver.DataSourceClass.label_column]
@@ -63,6 +63,7 @@ class Driver(object):
             predict_result = gmm_ubm.predict_ubm_adapt(test_data=user_adapt_x)
             results_for_one_adapt.append(predict_result)
             label_for_one_adapt.append(True)
+
 
             for other_user_id in user_ids:
                 if other_user_id == user_id:
@@ -98,7 +99,7 @@ class Driver(object):
         train_x, train_y, valid_x, valid_y, test_x, test_y = Driver.split_train_valid_test(df_all)
         gmm_ubm = GMM_UBM(
             data_source_name=Driver.DataSourceClass.__name__,
-            model_name='IN A CAR OR ON A BUS',
+            model_name='All labels',
             n_comp=100,
             max_iter=100,
             balance_factor=0.5
