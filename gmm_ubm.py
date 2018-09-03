@@ -19,30 +19,29 @@ class GMM_UBM(object):
 
     def __init__(self,
                  data_source_name: str,
-                 label_name: str,
+                 model_name: str,
                  n_comp,
                  max_iter,
-                 score_thresh,
                  balance_factor,
                  ):
         self.logger = logging.getLogger(__name__)  # __name__ is file name; GMM_UBM.__name__ is class name
-        self.model_path_prefix = os.path.join(data_source_name + "models", label_name)
+        self.model_path_prefix = os.path.join(data_source_name + "models", model_name)
         self.n_comp = n_comp
         self.max_iter = max_iter
-        self.score_thresh = score_thresh
-        self.balance_factor=balance_factor
+        self.balance_factor = balance_factor
         self.gmm: mixture.GaussianMixture = None
         self.adapt_model: mixture.GaussianMixture = None
         self.score_lld = []
 
-    def fit_ubm(self, gmm_train_data: pd.DataFrame):
+        self.score_thresh = 0.8
+
+    def fit_background_gmm(self, train_x: pd.DataFrame):
         gmm = mixture.GaussianMixture(n_components=self.n_comp,
                                       covariance_type='diag',
                                       max_iter=self.max_iter,
                                       verbose=2, reg_covar=1e-9)
-        self.logger.info("Training data with columns: {feature_columns}".format(
-            feature_columns=list(gmm_train_data)))
-        gmm.fit(gmm_train_data)
+        self.logger.info("Training data with columns: {feature_columns}".format(feature_columns=list(train_x)))
+        gmm.fit(train_x)
 
         if not os.path.exists(self.model_path_prefix):
             os.makedirs(self.model_path_prefix)
@@ -50,7 +49,7 @@ class GMM_UBM(object):
         # self.extract_param()
         self.gmm = gmm
 
-    def load_ubm(self):
+    def load_background_gmm(self):
         gmm = joblib.load(os.path.join(self.model_path_prefix, 'gmm.pkl'))
         self.gmm = gmm
 
@@ -70,12 +69,12 @@ class GMM_UBM(object):
         one_e = adapt_train_data.mul(col_p, axis=0).sum() / one_n
         return one_e
 
-    def fit_adapt(self, adapt_train_data: pd.DataFrame):
+    def fit_adapt(self, adapt_x: pd.DataFrame):
         self.adapt_model = clone(self.gmm)
-        pie_n = adapt_train_data.apply(self._obs_to_pie_n_row, result_type='expand', axis=1)  # type: pd.DataFrame
+        pie_n = adapt_x.apply(self._obs_to_pie_n_row, result_type='expand', axis=1)  # type: pd.DataFrame
         p = pie_n.div(pie_n.sum(axis=1), axis='rows')
         n = p.sum()
-        e_list = [self._npz_to_e_one(n[gmm_class], p.iloc[:, gmm_class], adapt_train_data) for gmm_class in
+        e_list = [self._npz_to_e_one(n[gmm_class], p.iloc[:, gmm_class], adapt_x) for gmm_class in
                   range(self.n_comp)]
         e = pd.concat(e_list, axis=1)
         alpha = n / (n + self.balance_factor)
@@ -87,22 +86,20 @@ class GMM_UBM(object):
                     gmm_class]
             self.adapt_model.means_[gmm_class] = new_mean
 
-        if not os.path.exists(self.model_path_prefix):
-            os.makedirs(self.model_path_prefix)
-        joblib.dump(self.adapt_model, os.path.join(self.model_path_prefix, 'adapt.pkl'))
+        # if not os.path.exists(self.model_path_prefix):
+        #     os.makedirs(self.model_path_prefix)
+        # joblib.dump(self.adapt_model, os.path.join(self.model_path_prefix, 'adapt.pkl'))
         # self.extract_param()
 
-    def load_adapt(self):
-        adapt_model = joblib.load(os.path.join(self.model_path_prefix, 'adapt.pkl'))
-        self.adapt_model = adapt_model
+    # def load_adapt(self):
+    #     adapt_model = joblib.load(os.path.join(self.model_path_prefix, 'adapt.pkl'))
+    #     self.adapt_model = adapt_model
 
-    def score_ubm_adapt(self, test_data: pd.DataFrame):
+    def predict_ubm_adapt(self, test_data: pd.DataFrame):
         score = self.adapt_model.score(test_data.values[:], y=None) - self.gmm.score(test_data.values[:], y=None)
-        self.score_lld = score
-
-    def predict_ubm_adapt(self):
-        if self.score_lld >= self.score_thresh:
+        if score >= self.score_thresh:
             return True
+        return False
 
 
 a = 0

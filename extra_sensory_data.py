@@ -1,28 +1,32 @@
 import numpy as np
 import pandas as pd
 import glob
+import os
 
 
 class ExtraSensoryData(object):
-    data_source_name= 'extra_sensory_'
-    is_load_raw_df_from_disk = True
-    is_load_processed_df_from_disk = True
+    data_folder = 'datasets_df/extra_sensory'
+    _raw_df_file_path = os.path.join(data_folder, "raw_df.pkl")
+    _processed_df_file_path = os.path.join(data_folder, "processed_df.pkl")
 
-    label_columns_list = ['label:IN_A_CAR', 'label:ON_A_BUS']
+    label_column = 'user_id'
 
-    raw_feature_columns_dict = {
+    _raw_feature_columns_dict = {
         'acc': ['raw_acc:3d:mean_x', 'raw_acc:3d:mean_y', 'raw_acc:3d:mean_z'],
         'gyro': ['proc_gyro:3d:mean_x', 'proc_gyro:3d:mean_y', 'proc_gyro:3d:mean_z']
     }
-    # One GMM_UBM per feature
-    feature_columns_dict = {
+
+    _raw_feature_columns_list = [item for sublist in _raw_feature_columns_dict.values() for item in sublist]
+
+    _feature_columns_dict = {
         'normal_acc': ['normal_acc_x', 'normal_acc_y', 'normal_acc_z'],
         'normal_gyro': ['normal_gyro_x', 'normal_gyro_y', 'normal_gyro_z'],
         'magni_acc': ['magni_acc'],
         'magni_gyro': ['magni_gyro'],
     }
-    feature_columns_list = [item for sublist in feature_columns_dict.values() for item in sublist]
-    feature_training_configs = {
+    feature_columns_list = [item for sublist in _feature_columns_dict.values() for item in sublist]
+
+    _deprecated_feature_training_configs = {
         'normal_acc': {
             'n_component': 100,
             'n_iter': 100
@@ -42,30 +46,24 @@ class ExtraSensoryData(object):
     }
 
     @staticmethod
-    def _load_raw_data(raw_columns):
-        raw_data_file_name = ExtraSensoryData.data_source_name + "raw_df.pkl"
-
-        if ExtraSensoryData.is_load_raw_df_from_disk:
-            df_raw = pd.read_pickle(raw_data_file_name)
-            return df_raw
-
+    def _load_raw_data():
         # data extracting
         user_id = 0
         df_list = []
         path = r"datasets/ExtraSensory"
         allfiles = glob.glob(path + "/*.csv")
         for filename in allfiles:
-            df_raw_one_file = pd.read_csv(filename, header=0, usecols=raw_columns)
+            df_raw_one_file = pd.read_csv(filename, header=0, usecols=ExtraSensoryData._raw_feature_columns_list)
 
-            df_raw_one_file['users'] = user_id + 1
-            df_raw_one_file = df_raw_one_file.dropna()
+            df_raw_one_file['user_id'] = user_id
+            # df_raw_one_file = df_raw_one_file.dropna()
             # dff=dff[dff['label:ON_A_BUS'].notnull()]
             # dff=dff[dff['label:IN_A_CAR'].notnull()]
             df_list.append(df_raw_one_file)
             user_id += 1
 
         df_raw = pd.concat(df_list, ignore_index=True)  # type: pd.DataFrame
-        df_raw.to_pickle(raw_data_file_name)
+        df_raw.to_pickle(ExtraSensoryData._raw_df_file_path)
         return df_raw
 
     @staticmethod
@@ -77,14 +75,9 @@ class ExtraSensoryData(object):
 
     @staticmethod
     def _process_features(df_raw: pd.DataFrame):
-        processed_df_file_name = ExtraSensoryData.data_source_name + "processed_df.pkl"
-        if ExtraSensoryData.is_load_processed_df_from_disk:
-            df_full = pd.read_pickle(processed_df_file_name)
-            return df_full
-
         df_processed = df_raw
         # normalize features
-        for feature_name, feature_columns in ExtraSensoryData.raw_feature_columns_dict.items():
+        for feature_name, feature_columns in ExtraSensoryData._raw_feature_columns_dict.items():
             magnitued_name = 'magni_' + feature_name
 
             magni = np.sqrt(np.square(df_processed[feature_columns]).sum(axis=1))
@@ -96,20 +89,27 @@ class ExtraSensoryData(object):
                 df_processed[feature_column_name] = df_processed[feature_column] / df_processed[magnitued_name]
 
         # extract processed feature columns
-        df_columns = ExtraSensoryData.feature_columns_list + ExtraSensoryData.label_columns_list
+        df_columns = ExtraSensoryData.feature_columns_list.append(ExtraSensoryData.label_column)
         df_processed = df_processed[df_columns]
         print(df_processed.info())
-        df_processed.to_pickle(processed_df_file_name)
+        df_processed.to_pickle(ExtraSensoryData._processed_df_file_path)
 
         return df_processed
 
     @staticmethod
-    def load_df():
-        nested_raw_columns = ExtraSensoryData.raw_feature_columns_dict.values()
-        raw_feature_columns = [item for sublist in nested_raw_columns for item in sublist]
-        raw_columns = raw_feature_columns + ExtraSensoryData.label_columns_list
+    def load_df(is_load_df_from_disk=False):
+        if is_load_df_from_disk:
+            if os.path.isfile(ExtraSensoryData._processed_df_file_path):
+                df_all = pd.read_pickle(ExtraSensoryData._processed_df_file_path)
+                return df_all
 
-        print(raw_columns)
-        df_raw = ExtraSensoryData._load_raw_data(raw_columns=raw_columns)
+            if os.path.isfile(ExtraSensoryData._raw_df_file_path):
+                df_raw = pd.read_pickle(ExtraSensoryData._raw_df_file_path)
+                df_all = ExtraSensoryData._process_features(df_raw=df_raw)
+                return df_all
+
+        if not os.path.exists(ExtraSensoryData.data_folder):
+            os.makedirs(ExtraSensoryData.data_folder)
+        df_raw = ExtraSensoryData._load_raw_data()
         df_all = ExtraSensoryData._process_features(df_raw=df_raw)
         return df_all
